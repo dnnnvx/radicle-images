@@ -11,6 +11,44 @@ upstream releases and published to GHCR for `linux/amd64` and `linux/arm64`.
 
 Tags are the upstream `x.y.z` and are never rebuilt or moved once published. There is no `latest`.
 
+## Examples
+
+### Docker Compose
+
+[`examples/compose.yaml`](examples/compose.yaml) runs a seed node, its HTTP API and the explorer
+(with [`examples/explorer.json`](examples/explorer.json) pointing at `localhost:8080`):
+
+```sh
+cd examples
+docker compose up -d
+docker compose logs init        # your node's DID
+```
+
+| | |
+|---|---|
+| Explorer | http://localhost:8081 |
+| HTTP API | http://localhost:8080/api/v1 |
+| P2P | `8776` (forward it and set `node.externalAddresses` for a public seed) |
+
+A one-shot `init` service creates the node key in the `radicle` volume on first start;
+the node and httpd share that volume. Run `rad` commands inside the node container, e.g.
+`docker compose exec node rad seed <rid>` to start seeding a repository.
+
+### Kubernetes
+
+[`examples/kubernetes.yaml`](examples/kubernetes.yaml) is the same setup as plain manifests: one pod
+with an init container (key), `radicle-node` and `radicle-httpd` on a shared PVC, the explorer with its
+config in a ConfigMap, and a `LoadBalancer` Service for P2P. Everything runs non-root with a read-only
+root filesystem and the `restricted` Pod Security profile's settings.
+
+```sh
+kubectl apply -f examples/kubernetes.yaml
+kubectl -n radicle logs deploy/radicle-node -c init   # your node's DID
+```
+
+Then expose `radicle-httpd` and `radicle-explorer` (port 8080) through your Ingress or Gateway, and set the
+httpd's public hostname in the explorer ConfigMap: visitors' browsers call the httpd directly.
+
 ## How releases get here
 
 A daily workflow (`update.yaml`) runs `scripts/update`, which reads the `latest` pointers on
