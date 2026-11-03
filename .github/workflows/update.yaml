@@ -1,0 +1,30 @@
+name: update
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - id: update
+        run: |
+          changes=$(scripts/update)
+          echo "${changes:-up to date}"
+          { echo 'changes<<EOF'; echo "$changes"; echo EOF; } >> "$GITHUB_OUTPUT"
+      - if: steps.update.outputs.changes != ''
+        env:
+          CHANGES: ${{ steps.update.outputs.changes }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump $(paste -sd, <<<"$CHANGES" | sed 's/,/, /g')"
+          git push
+          # pushes made with GITHUB_TOKEN don't trigger workflows, a dispatch does
+          gh workflow run publish.yaml --ref main

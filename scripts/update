@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Bump node/, httpd/ and explorer/ to the latest upstream releases (x.y.z only).
+# New tarballs must carry a valid signature from a key in allowed_signers; their sha256 is
+# then pinned in the Dockerfile. Prints one "<image> <old> -> <new>" line per bump.
+set -euo pipefail
+shopt -s inherit_errexit
+cd "$(dirname "$0")/.."
+
+FILES=https://files.radicle.dev/releases
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+arg() { sed -n "s/^ARG $2=//p" "$1/Dockerfile"; }
+set_arg() { sed -i.bak "s|^ARG $2=.*|ARG $2=$3|" "$1/Dockerfile" && rm "$1/Dockerfile.bak"; }
+
+latest() { # <json url> <field>
+  local v
+  v=$(curl -fsSL "$1" | jq -er ".$2")
+  [[ $2 != version || $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unexpected version '$v' in $1" >&2; exit 1; }
+  echo "$v"
+}
+
+# Download <url> and its .sig, verify the signature, print the sha256.
+verified_sha256() {
+  local f
+  f="$tmp/$(basename "$1")"
+  curl -fsSL -o "$f" "$1"
+  curl -fsSL -o "$f.sig" "$1.sig"
+  ssh-keygen -Y verify -f allowed_signers -I radicle -n file -s "$f.sig" <"$f" >&2 ||
+    { echo "bad or untrusted signature: $1" >&2; exit 1; }
+  sha256sum "$f" | cut -d' ' -f1
+}
+
+# <dir> <new version> <url template, ARCH = target triple arch>
+bump_tarball() {
+  local dir=$1 new=$2 old amd64 arm64
+  old=$(arg "$dir" VERSION)
+  [[ $new == "$old" ]] && return
+  # plain assignments: errexit ignores failures in a $(...) passed as an argument
+  amd64=$(verified_sha256 "${3//ARCH/x86_64}")
+  arm64=$(verified_sha256 "${3//ARCH/aarch64}")
+  set_arg "$dir" SHA256_AMD64 "$amd64"
+  set_arg "$dir" SHA256_ARM64 "$arm64"
+  set_arg "$dir" VERSION "$new"
+  echo "$dir $old -> $new"
+}
+
+v=$(latest "$FILES/latest/radicle.json" version)
+bump_tarball node "$v" "$FILES/$v/radicle-$v-ARCH-unknown-linux-musl.tar.xz"
+
+v=$(latest "$FILES/radicle-httpd/latest/radicle-httpd.json" version)
+bump_tarball httpd "$v" "$FILES/radicle-httpd/$v/radicle-httpd-$v-ARCH-unknown-linux-musl.tar.xz"
+
+# The explorer follows httpd: same version, built at that release's radicle-gui commit
+old=$(arg explorer VERSION)
+if [[ $v != "$old" ]]; then
+  short=$(latest "$FILES/radicle-httpd/$v/radicle-httpd.json" commit)
+  rev=$(curl -fsSL "https://api.github.com/repos/radicle-dev/radicle-gui/commits/$short" | jq -er .sha)
+  set_arg explorer REV "$rev"
+  set_arg explorer VERSION "$v"
+  echo "explorer $old -> $v"
+fi
