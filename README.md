@@ -96,3 +96,41 @@ at `/usr/share/nginx/html/config.json`, with your seed first in `preferredSeeds`
 ```sh
 docker run -d -p 8080:8080 -v ./config.json:/usr/share/nginx/html/config.json:ro ghcr.io/dnnnvx/radicle-explorer:0.30.0
 ```
+
+## Search (optional, not included)
+
+Out of the box the explorer shows *"This seed doesn't have the search backend enabled, so repository
+search is unavailable."* That's expected. Everything else works: without a search backend, httpd
+builds repo listings by walking its storage, and only the search box (`/repos/search?q=…`) is off.
+
+Search needs two more services next to the node:
+
+- [`radicle-search`](https://github.com/radicle-dev/radicle-gui/tree/master/explorer/crates/radicle-search),
+  a daemon that follows the node's events (control socket) and keeps an index of the public repos the
+  node seeds: name and description for search, seeding count and last activity for sorting.
+- [Meilisearch](https://www.meilisearch.com), which stores that index and answers the queries.
+
+These images leave it out on purpose. It is built for seeds hosting hundreds of repos. On a personal
+seed with a handful, the plain listing already shows everything, and search would add a database with
+its own volume and key to run.
+
+If you want it anyway, `radicle-search` is released with radicle-httpd (same version and signing
+keys, under [`files.radicle.dev/releases/radicle-search/`](https://files.radicle.dev/releases/radicle-search/)),
+so an image would follow `httpd/Dockerfile`. Wire it up with environment variables, using the same
+URL, key and index name on both sides:
+
+| Process | Variable | Default | Purpose |
+|---|---|---|---|
+| radicle-search | `RADICLE_SEARCH_MEILI_URL` | `http://localhost:7700` | Meilisearch to write the index to |
+| | `RADICLE_SEARCH_MEILI_KEY` | none | Meilisearch master key |
+| | `RADICLE_SEARCH_INDEX_NAME` | `repos` | index name |
+| | `RAD_HOME`, `RAD_SOCKET` | `$RAD_HOME/node/control.sock` | the node's volume and control socket (share the volume) |
+| radicle-httpd | `RADICLE_SEARCH_URL` | none (**unset = search off**) | Meilisearch to query |
+| | `RADICLE_SEARCH_KEY` | none | Meilisearch API key |
+| | `RADICLE_SEARCH_INDEX_NAME` | `repos` | index name |
+| | `RADICLE_SEARCH_TIMEOUT_MS` | `500` | per-query timeout |
+
+httpd falls back to the storage walk whenever the backend is unset, unreachable or slow, so enabling
+search can't break the API. See the upstream
+[radicle-search README](https://github.com/radicle-dev/radicle-gui/blob/master/explorer/crates/radicle-search/README.md)
+for the rescan and batching settings.
