@@ -1,0 +1,48 @@
+# A Radicle seed node with its HTTP API and web explorer.
+#   docker compose up -d
+#   explorer: http://localhost:8081  ·  API: http://localhost:8080/api/v1  ·  P2P: 8776
+services:
+  # First start only: create the node key (no passphrase) and default config in the volume
+  init:
+    image: ghcr.io/dnnnvx/radicle-node:1.10.3
+    entrypoint: ["sh", "-euc"]
+    command:
+      - '[ -f "$$RAD_HOME/keys/radicle" ] || echo | rad auth --alias "$${ALIAS:-my-seed}" --stdin; rad self --did'
+    environment:
+      ALIAS: my-seed
+    volumes:
+      - radicle:/var/lib/radicle
+
+  node:
+    image: ghcr.io/dnnnvx/radicle-node:1.10.3
+    # --force: a crashed node leaves its control socket behind in the volume
+    command: ["--force", "--listen", "0.0.0.0:8776"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    ports:
+      - "8776:8776"
+    volumes:
+      - radicle:/var/lib/radicle
+
+  httpd:
+    image: ghcr.io/dnnnvx/radicle-httpd:0.30.0
+    depends_on:
+      - node
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - radicle:/var/lib/radicle
+
+  explorer:
+    image: ghcr.io/dnnnvx/radicle-explorer:0.30.0
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./explorer.json:/usr/share/nginx/html/config.json:ro
+
+volumes:
+  radicle:

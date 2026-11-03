@@ -1,0 +1,235 @@
+# A Radicle seed node (node + httpd in one pod, sharing the volume) and the web explorer.
+#   kubectl apply -f kubernetes.yaml
+# Expose radicle-httpd and radicle-explorer (port 8080) with your Ingress/Gateway, and set the
+# httpd's public hostname in the explorer config below. Browsers call the httpd directly.
+# P2P (8776) goes through the radicle-p2p LoadBalancer; set node.externalAddresses in
+# $RAD_HOME/config.json to the address peers should dial.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: radicle
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: radicle
+  namespace: radicle
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: radicle-node
+  namespace: radicle
+spec:
+  replicas: 1
+  # RWO volume: the old pod must stop before the new one starts
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: radicle-node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: radicle-node
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # First start only: create the node key (no passphrase) and default config
+        - name: init
+          image: ghcr.io/dnnnvx/radicle-node:1.10.3
+          command:
+            - sh
+            - -euc
+            - '[ -f "$RAD_HOME/keys/radicle" ] || echo | rad auth --alias my-seed --stdin; rad self --did'
+          env: &env
+            - name: HOME
+              value: /tmp
+          securityContext: &securityContext
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: &volumeMounts
+            - name: data
+              mountPath: /var/lib/radicle
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: node
+          image: ghcr.io/dnnnvx/radicle-node:1.10.3
+          # --force: a crashed node leaves its control socket behind on the volume
+          args: ["--force", "--listen", "0.0.0.0:8776"]
+          env: *env
+          securityContext: *securityContext
+          volumeMounts: *volumeMounts
+          ports:
+            - name: p2p
+              containerPort: 8776
+          readinessProbe:
+            tcpSocket:
+              port: p2p
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+        - name: httpd
+          image: ghcr.io/dnnnvx/radicle-httpd:0.30.0
+          # short repo names in URLs: add "--alias", "<name>", "<rid>"
+          args: ["--listen", "0.0.0.0:8080"]
+          env: *env
+          securityContext: *securityContext
+          volumeMounts: *volumeMounts
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /api/v1
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: radicle
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: radicle-httpd
+  namespace: radicle
+spec:
+  selector:
+    app.kubernetes.io/name: radicle-node
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: radicle-p2p
+  namespace: radicle
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: radicle-node
+  ports:
+    - name: p2p
+      port: 8776
+      targetPort: p2p
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: radicle-explorer
+  namespace: radicle
+data:
+  # Shaped like upstream's explorer/config/default.json; your seed first in preferredSeeds
+  config.json: |
+    {
+      "nodes": {
+        "fallbackPublicExplorer": "https://radicle.network/nodes/$host/$rid$path",
+        "defaultHttpdPort": 443,
+        "defaultLocalHttpdPort": 8080,
+        "defaultHttpdScheme": "https",
+        "homepage": "node"
+      },
+      "source": { "commitsPerPage": 30 },
+      "supportWebsite": "https://radicle.zulipchat.com",
+      "deploymentId": null,
+      "preferredSeeds": [
+        { "hostname": "seed.example.com", "port": 443, "scheme": "https" }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: radicle-explorer
+  namespace: radicle
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: radicle-explorer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: radicle-explorer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: explorer
+          image: ghcr.io/dnnnvx/radicle-explorer:0.30.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/nginx/html/config.json
+              subPath: config.json
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: config
+          configMap:
+            name: radicle-explorer
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: radicle-explorer
+  namespace: radicle
+spec:
+  selector:
+    app.kubernetes.io/name: radicle-explorer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
