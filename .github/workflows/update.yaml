@@ -14,9 +14,12 @@ jobs:
       - uses: actions/checkout@v7
       - id: update
         run: |
-          changes=$(scripts/update)
+          # exit 1 = some image was skipped (e.g. untrusted signature): still commit the rest
+          status=0
+          changes=$(scripts/update) || status=$?
           echo "${changes:-up to date}"
           { echo 'changes<<EOF'; echo "$changes"; echo EOF; } >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
       - if: steps.update.outputs.changes != ''
         env:
           CHANGES: ${{ steps.update.outputs.changes }}
@@ -29,3 +32,7 @@ jobs:
           git push
           # pushes made with GITHUB_TOKEN don't trigger workflows, a dispatch does
           gh workflow run publish.yaml --ref main
+      - if: steps.update.outputs.status != '0'
+        run: |
+          echo "::error::scripts/update skipped some images, see the update step log"
+          exit 1

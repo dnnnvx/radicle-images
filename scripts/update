@@ -2,6 +2,8 @@
 # Bump node/, httpd/ and explorer/ to the latest upstream releases (x.y.z only).
 # New tarballs must carry a valid signature from a key in allowed_signers; their sha256 is
 # then pinned in the Dockerfile. Prints one "<image> <old> -> <new>" line per bump.
+# An image whose release fails verification is skipped (the others are still bumped) and
+# the script exits 1 at the end, after printing the bumps it did make.
 set -euo pipefail
 shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
@@ -21,13 +23,17 @@ latest() { # <json url> <field>
 }
 
 # Download <url> and its .sig, verify the signature, print the sha256.
+# Callers use `|| ...`, which disables errexit in here: every step returns explicitly.
 verified_sha256() {
   local f
   f="$tmp/$(basename "$1")"
-  curl -fsSL -o "$f" "$1"
-  curl -fsSL -o "$f.sig" "$1.sig"
-  ssh-keygen -Y verify -f allowed_signers -I radicle -n file -s "$f.sig" <"$f" >&2 ||
-    { echo "bad or untrusted signature: $1" >&2; exit 1; }
+  curl -fsSL -o "$f" "$1" || return 1
+  curl -fsSL -o "$f.sig" "$1.sig" || return 1
+  ssh-keygen -Y verify -f allowed_signers -I radicle -n file -s "$f.sig" <"$f" >&2 || {
+    echo "bad or untrusted signature: $1" >&2
+    ssh-keygen -Y check-novalidate -n file -s "$f.sig" <"$f" >&2 || true
+    return 1
+  }
   sha256sum "$f" | cut -d' ' -f1
 }
 
@@ -36,27 +42,36 @@ bump_tarball() {
   local dir=$1 new=$2 old amd64 arm64
   old=$(arg "$dir" VERSION)
   [[ $new == "$old" ]] && return
-  # plain assignments: errexit ignores failures in a $(...) passed as an argument
-  amd64=$(verified_sha256 "${3//ARCH/x86_64}")
-  arm64=$(verified_sha256 "${3//ARCH/aarch64}")
+  amd64=$(verified_sha256 "${3//ARCH/x86_64}") || return 1
+  arm64=$(verified_sha256 "${3//ARCH/aarch64}") || return 1
   set_arg "$dir" SHA256_AMD64 "$amd64"
   set_arg "$dir" SHA256_ARM64 "$arm64"
   set_arg "$dir" VERSION "$new"
   echo "$dir $old -> $new"
 }
 
+skipped=()
+skip() { skipped+=("$1"); echo "skipping $1 $2" >&2; }
+
 v=$(latest "$FILES/latest/radicle.json" version)
-bump_tarball node "$v" "$FILES/$v/radicle-$v-ARCH-unknown-linux-musl.tar.xz"
+bump_tarball node "$v" "$FILES/$v/radicle-$v-ARCH-unknown-linux-musl.tar.xz" || skip node "$v"
 
 v=$(latest "$FILES/radicle-httpd/latest/radicle-httpd.json" version)
-bump_tarball httpd "$v" "$FILES/radicle-httpd/$v/radicle-httpd-$v-ARCH-unknown-linux-musl.tar.xz"
+bump_tarball httpd "$v" "$FILES/radicle-httpd/$v/radicle-httpd-$v-ARCH-unknown-linux-musl.tar.xz" || skip httpd "$v"
 
 # The explorer follows httpd: same version, built at that release's radicle-gui commit
 old=$(arg explorer VERSION)
-if [[ $v != "$old" ]]; then
+if [[ $v != "$(arg httpd VERSION)" ]]; then
+  skip explorer "$v (httpd was not bumped)"
+elif [[ $v != "$old" ]]; then
   short=$(latest "$FILES/radicle-httpd/$v/radicle-httpd.json" commit)
   rev=$(curl -fsSL "https://api.github.com/repos/radicle-dev/radicle-gui/commits/$short" | jq -er .sha)
   set_arg explorer REV "$rev"
   set_arg explorer VERSION "$v"
   echo "explorer $old -> $v"
+fi
+
+if ((${#skipped[@]})); then
+  echo "not updated: ${skipped[*]}" >&2
+  exit 1
 fi
