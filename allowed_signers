@@ -13,3 +13,5 @@ radicle ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM7gBkM8PwWFe5tiJkCXdYvrYSKapm8MSNVz
 radicle ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOl44zVBYvu1Uhmq9nshhic4r1Moz5fdNOoWTtdJrUwd
 radicle ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPE9CnXiiTVCbXGQJSgZuboN4aPzNw4klqp/6/+djcD5
 radicle ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPueml1FxzjvwbD7vRZfwoaoyuxLy0L+WLBwSNiVoJe5
+# radicle-httpd releases: Daniel Norman (github.com/2color signing key, signs radicle-gui commits)
+radicle ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINdQZiuU/1EJBdItSP7K7nZBlGTOuVtIZk1etPCMaDdi
