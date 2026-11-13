@@ -2,9 +2,9 @@
 # VERSION and the checksums are bumped by scripts/update after verifying the release signature.
 FROM alpine:3.24 AS fetch
 ARG TARGETARCH
-ARG VERSION=0.30.0
-ARG SHA256_AMD64=dd16f6f966e62fafee5a6547d1e31c8857c607c5d955380872c9e7a06500285f
-ARG SHA256_ARM64=ab6ab9f073f9ebc58b3132f9686b65d882250dc434fb4fea32806481f665dd80
+ARG VERSION=0.31.0
+ARG SHA256_AMD64=b837befda0a0ccdeab2e6fdb1362ee8aa785fd104643c8f3f102e6ce31f67cf2
+ARG SHA256_ARM64=32e897a6855affe60b2f8443a5e02d7b44f8f5d7fad5dfed93ff316de7c7a939
 RUN apk add --no-cache curl xz
 WORKDIR /dl
 RUN set -eu; \

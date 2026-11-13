@@ -2,8 +2,8 @@
 # The explorer has no releases of its own: VERSION is the radicle-httpd release it ships with,
 # REV that release's commit in radicle-gui. Both are bumped by scripts/update.
 FROM node:24-alpine3.24 AS build
-ARG VERSION=0.30.0
-ARG REV=86ba3917ea5e34606e6dc76dce05561b71c38969
+ARG VERSION=0.31.0
+ARG REV=11cf896b903fafc8ff860f8547394d98664ecd99
 RUN apk add --no-cache git
 WORKDIR /src
 RUN git init -q . \
